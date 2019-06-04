@@ -60,6 +60,8 @@ func main() {
 
 	if *debug {
 		log.SetLevel(log.DebugLevel)
+	} else {
+		log.SetLevel(log.InfoLevel)
 	}
 	host = fmt.Sprintf("%s:%d", host, *port)
 	mw := backend.NewMetricWriter(host, prefix, parseTags(tags))
