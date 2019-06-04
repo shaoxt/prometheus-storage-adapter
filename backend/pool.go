@@ -35,8 +35,11 @@ func defaultMkConn(host string) (net.Conn, error) {
 	return net.Dial("tcp", host)
 }
 
-func prepareConnection(conn net.Conn) (net.Conn, error) {
+func (cp *Pool) prepareConnection(conn net.Conn) (net.Conn, error) {
 	if err := conn.SetWriteDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		// On error, release our create hold
+		cp.release(conn)
+		log.Errorf("Preparing connection error:%v", err)
 		return nil, err
 	}
 	return conn, nil
@@ -49,14 +52,15 @@ func (cp *Pool) Get() (net.Conn, error) {
 	// Try to grab an available connection within 1ms
 	select {
 	case conn := <-cp.connections:
-		return prepareConnection(conn)
+		conn, err := cp.prepareConnection(conn)
+		return conn, err
 	case <-time.After(time.Millisecond):
 		// No connection came around in time, let's see
 		// whether we can get one or build a new one first.
-		log.Debugf("No connection in pool")
+		log.Info("No connection in pool")
 		select {
 		case conn := <-cp.connections:
-			return prepareConnection(conn)
+			return cp.prepareConnection(conn)
 		case cp.createsem <- true:
 			// Room to make a connection
 			log.Debugf("About to connect")
@@ -64,17 +68,13 @@ func (cp *Pool) Get() (net.Conn, error) {
 			if err != nil {
 				// On error, release our create hold
 				cp.release(conn)
+				log.Errorf("Not able to connect to:%s", cp.host)
 				return nil, err
 			}
-			conn, err = prepareConnection(conn)
-			if err != nil {
-				// On error, release our create hold
-				cp.release(conn)
-				return nil, err
-			}
+			conn, err = cp.prepareConnection(conn)
 			return conn, err
 		case <-time.After(maxConnWait):
-			log.Debugf("Max connection exceeded")
+			log.Warnf("Max connection exceeded")
 			return nil, ErrTimeout
 		}
 	}
